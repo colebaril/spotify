@@ -1,0 +1,365 @@
+---
+title: "Spotify Wrapped: R and ggplot2 Edition"
+author: "Cole Baril"
+date: "`r format(Sys.Date())`"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float:
+      collapsed: false
+    code_download: true
+---
+
+<!--- This style block is to tweak the formatting of the data tables in the report --->
+<style>
+
+  h1 {
+  font-weight: bold;
+}
+
+  h2 {
+  font-weight: bold;
+  }
+
+  table {
+    display: block;
+    overflow: auto;
+  }
+
+  blockquote {
+    background-color: #1DB954;
+    color: white;
+    font-weight: bold;
+ }
+
+</style>
+
+# Setup
+
+```{r setup, include = FALSE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(fig.width = 10, fig.asp = 0.8, out.width = "100%", message = FALSE, warning = FALSE)
+```
+
+## Load packages
+
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+
+# Libraries we need
+libs <- c(
+  "tidyverse", "jsonlite", "knitr", "gghighlight",
+  "plotly", "hms", "lubridate", "here", "gt", "webshot"
+)
+
+
+# install missing libraries
+installed_libs <- libs %in% rownames(installed.packages())
+if (any(installed_libs == F)) {
+  install.packages(libs[!installed_libs])
+}
+
+# load libraries
+invisible(lapply(libs, library, character.only = T))
+```
+
+## Import & Clean
+
+```{r}
+StreamHistory0 <- fromJSON(here("Zip/MyData/endsong_0.json"), flatten = TRUE)
+StreamHistory1 <- fromJSON(here("Zip/MyData/endsong_1.json"), flatten = TRUE)
+StreamHistory2 <- fromJSON(here("Zip/MyData/endsong_2.json"), flatten = TRUE)
+StreamHistory3 <- fromJSON(here("Zip/MyData/endsong_3.json"), flatten = TRUE)
+StreamHistory4 <- fromJSON(here("Zip/MyData/endsong_4.json"), flatten = TRUE)
+StreamHistory5 <- fromJSON(here("Zip/MyData/endsong_5.json"), flatten = TRUE)
+StreamHistory6 <- fromJSON(here("Zip/MyData/endsong_6.json"), flatten = TRUE)
+
+streamingData <- rbind(StreamHistory0, StreamHistory1, StreamHistory2, StreamHistory3, StreamHistory4, StreamHistory5, StreamHistory6)
+
+spotify <- streamingData %>% 
+  as_tibble() %>%
+  separate(col = "ts", 
+           into = c("date","time"),
+           sep = "T") %>% 
+  separate(col = "time",
+           into = "time",
+           sep = "Z") 
+
+datetime <- as.POSIXct(paste(spotify$date, spotify$time), format = "%Y-%m-%d %H:%M:%S")
+spotify$datetime <- datetime
+
+spotify <- spotify %>% 
+  mutate(datetime = datetime - hours(6)) %>% # Convert time zones to CST
+  mutate(date = floor_date(datetime, "day") %>% # Creating date 
+           as_date, minutes = ms_played / 60000) %>% # Convert ms played to minutes played
+  mutate(time = floor_date(datetime, "minutes")) # Remove seconds from time
+
+spotify %>% 
+  glimpse(24)
+
+
+# Set time limits for use in plots
+lims <- as.POSIXct(strptime(c("2014-10-27", "2022-11-23"), 
+                   format = "%Y-%m-%d"))
+
+spotify$date <- ymd(spotify$date)
+```
+
+
+# Genre 
+
+```{r}
+spotify <- spotify %>% 
+  mutate(genre = case_when(master_metadata_album_artist_name %in% c("Armin van Buuren",
+                                                                    "GAIA",
+                                                                    "Aly & Fila",
+                                                                    "Alex M.O.R.P.H",
+                                                                    "Gareth Emery",
+                                                                    "Above & Beyond",
+                                                                    "ReOrder",
+                                                                    "Andrew Rayel",
+                                                                    "Super8 & Tab",
+                                                                    "Craig Connelly") ~  "Trance",
+                           master_metadata_album_artist_name %in% c("Lady Gaga",
+                                                                    "Halsey") ~ "Pop"))
+
+artist_summary <- spotify %>% 
+  group_by(master_metadata_album_artist_name) %>% 
+  tally()
+```
+
+# Listening Patterns Over Time
+
+## Daily 
+
+```{r}
+spotify %>% 
+  filter(ms_played >= 1000) %>% 
+  group_by(date)  %>%
+  # group_by(date = floor_date(date, "day")) %>% # This does not work after updates. 
+  summarize(songs = n()) %>% 
+  arrange(date) %>% 
+  ggplot(aes(x = date, y = songs)) +
+  geom_col(aes(fill = songs, colour = songs)) + # Use `colour = ` here because using `fill = ` does not work with small lines.
+  scale_x_date(breaks = "1 year", 
+                   date_labels = "%Y",
+                   expand = c(0, 0)) + # Removes white space around the plot on the x axis 
+  scale_fill_gradient(high = "#0b3e34", low = "#1db954") +
+  scale_colour_gradient(high = "#0b3e34", low = "#1db954") + 
+  labs(x = "Date",
+       y = "Number of Songs",
+       colour = "Songs") +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank()) 
+```
+
+## Monthly
+
+```{r}
+spotify %>% 
+  filter(ms_played >= 1000) %>% 
+  group_by(date) %>%
+  group_by(date = floor_date(date, "month")) %>% 
+  summarize(songs = n()) %>% 
+  arrange(date) %>% 
+  ggplot(aes(x = date, y = songs)) +
+  geom_col(aes(fill = songs, colour = songs)) + # Use `colour = ` here because using `fill = ` does not work with small lines.
+  scale_x_date(breaks = "1 year", 
+                   date_labels = "%Y",
+               expand = c(0, 0)) + # Removes white space around the plot on the x axis 
+  scale_fill_gradient(high = "#0b3e34", low = "#1db954") +
+  scale_colour_gradient(high = "#0b3e34", low = "#1db954") + 
+  labs(x = "Date",
+       y = "Number of Songs",
+       colour = "Songs") +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank()) 
+```
+
+## Listening Heat map
+
+> This heat map shows the *total* number of minutes spent listening to Spotify during each hour in the day on each weekday. 
+
+```{r}
+spotify %>% 
+  group_by(date, hour = hour(datetime), weekday = wday(date, label = TRUE)) %>% 
+  summarize(minuteslistened = sum(minutes)) %>% 
+  mutate(year = format(date, "%Y")) %>% 
+  group_by(hour, weekday) %>% 
+  summarize(minuteslistened = sum(minuteslistened)) %>% 
+  drop_na() %>% # NA Weekday value of 181 dropped. 
+  ggplot(aes(weekday, hour, fill = minuteslistened)) +
+  geom_tile(colour = "white", size = 0.1) + 
+  scale_fill_gradient(high = "#0b3e34", low = "#1db954") +
+  scale_y_continuous(trans = "reverse") +
+  theme_bw() +
+  labs(x = "Weekday",
+       y = "Hour of the Day (24-Hour, CST)",
+       fill = "Minutes",
+       title = "Spotify Weekly Listening Heatmap",
+       subtitle = "2014 to 2022") +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+
+```
+
+# Artists 
+
+> The data set is **Very** large, and `ggplot` cannot deal with very large data sets. Therefore, I will be extracting small subsets from the data. Additionally,  **Podcasts** are not considered a song with an artist, so these are excluded (for now). 
+
+## Top 20 Artists - All Time
+
+```{r}
+spotify %>% 
+  mutate(year = floor_date(date, "year")) %>% 
+  mutate(year = format(year, "%Y")) %>% 
+  group_by(master_metadata_album_artist_name) %>% 
+  summarize(hours = sum(minutes) / 60) %>% 
+  drop_na() %>% 
+  arrange(desc(hours)) %>% 
+  head(20, hours) %>% 
+  gt() %>% 
+  tab_header(title = "Top 20 Artists All Time") %>% 
+  cols_label(
+    master_metadata_album_artist_name = "Artist",
+    hours = "Hours Listened") %>% 
+  fmt_number(columns = hours,
+             rows = everything(),
+             decimals = 0) %>% 
+  as_raw_html()
+  
+```
+
+## Listening Activity by Artist Over Time
+
+```{r}
+spotify %>% 
+  group_by(master_metadata_album_artist_name, date = floor_date(date, "month")) %>% 
+  filter(master_metadata_album_artist_name %in% c("Armin van Buuren", 
+                                                  "GAIA",
+                                                  "Above & Beyond",
+                                                  "Gareth Emery",
+                                                  "Alex M.O.R.P.H.",
+                                                  "Gustav Mahler",
+                                                  "Lady Gaga",
+                                                  "ReOrder",
+                                                  "Halsey",
+                                                  "Aly & Fila")) %>% 
+  summarize(hours = sum(minutes) / 60) %>% 
+  drop_na() %>% 
+  ggplot(aes(x = date, y = hours, group = master_metadata_album_artist_name, 
+             colour = master_metadata_album_artist_name)) +
+  geom_line() +
+  scale_x_date(breaks = "1 year", date_labels = "%Y") +
+  gghighlight(master_metadata_album_artist_name == "Armin van Buuren" || 
+              master_metadata_album_artist_name == "Gustav Mahler" ||
+              master_metadata_album_artist_name == "Lady Gaga" ||
+              master_metadata_album_artist_name == "Halsey") +
+  labs(title = "Hours Listened to Most Listened Artists Over Time",
+       subtitle = "Data for top 10 artists only \nData aggregated by month. Other grey lines are top Trance artists",
+       x = "Date", 
+       y = "Hours Listened") +
+  theme_bw()  +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank())
+```
+
+# Top 20 Songs
+
+```{r}
+spotify %>% 
+  mutate(year = floor_date(date, "year")) %>% 
+  mutate(year = format(year, "%Y")) %>% 
+  group_by(master_metadata_track_name) %>% 
+  summarize(hours = sum(minutes) / 60) %>% 
+  drop_na() %>% 
+  arrange(desc(hours)) %>% 
+  head(20, hours) %>% 
+  gt() %>% 
+  tab_header(title = "Top 20 Songs All Time") %>% 
+  cols_label(
+    master_metadata_track_name = "Song",
+    hours = "Hours Listened") %>% 
+  fmt_number(columns = hours,
+             rows = everything(),
+             decimals = 0) 
+```
+
+## Most Listened to Artist in a Day
+
+```{r}
+spotify %>% 
+  group_by(master_metadata_album_artist_name, 
+           date = floor_date(date, "day")) %>% 
+  summarize(hours = sum(minutes) / 60) %>% 
+  arrange(desc(hours)) %>% 
+  drop_na() %>% 
+  head(100, hours) %>% 
+  gt()
+
+```
+
+# Listening Device 
+
+```{r}
+
+
+device_time <- spotify %>% 
+  mutate(device = case_when(str_detect(platform, 'Android') ~ 'Android',
+                            str_detect(platform, 'iOS') ~ 'iPhone',
+                            str_detect(platform, 'Windows|windows|web') ~ 'Windows',
+                            str_detect(platform, 'google') ~ 'Google Home'
+                            )) %>% 
+  group_by(device) %>% 
+  summarise_at(vars(minutes), sum) %>% 
+  mutate(hours = minutes/60) %>% 
+  mutate(days = hours/24)
+
+device_time %>% 
+  add_row(
+    device_time %>% 
+    summarise(across(2:last_col(), sum) %>% 
+    mutate(device = "Total"))
+    ) %>% 
+  gt() %>% 
+  tab_header(title = "Time Spent Listening by Platform") %>% 
+  cols_label(
+    device = "Platform",
+    minutes = "Minutes",
+    hours = "Hours",
+    days = "Days") %>% 
+  fmt_number(columns = c(minutes, hours, days),
+             rows = everything(),
+             decimals = 0) %>% 
+  as_raw_html()
+
+date_minutes <- spotify %>% 
+  mutate(device = case_when(str_detect(platform, 'Android') ~ 'Android',
+                            str_detect(platform, 'iOS') ~ 'iPhone',
+                            str_detect(platform, 'Windows|windows|web') ~ 'Windows',
+                            str_detect(platform, 'google') ~ 'Google Home'
+                            )) %>% 
+  group_by(device, date) %>% 
+  summarise_at(vars(minutes), sum) %>% 
+  mutate(hours = minutes/60) %>% 
+  mutate(days = hours/24)
+
+```
+
+# References
+
+```{r}
+library(purrr)
+c("tidyverse", "jsonlite", "knitr", "gghighlight",
+  "hms", "lubridate", "here", "gt", "webshot") %>%
+  map(citation) %>%
+  print(style = "text")
+```
+
